@@ -44,8 +44,10 @@ function App() {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const data = await response.json();
-      setMessages(prev => [...prev, { text: data.response, isUser: false }]);
-      speakText(data.response);
+      const fullText = data.response + (data.page_references ? `\n\nReferences:\n${data.page_references.join("\n")}` : "");
+
+      setMessages(prev => [...prev, { text: fullText, isUser: false }]);
+      speakText(fullText);
     } catch (error) {
       console.error("Error sending message:", error);
       setMessages(prev => [...prev, { text: "Sorry, there was an error processing your request.", isUser: false }]);
@@ -69,10 +71,22 @@ function App() {
       });
 
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
+      var fullText = "";
+      
       const data = await response.json();
-      setMessages(prev => [...prev, { text: data.response, isUser: false }]);
+      
+      const assistantMessage = {
+  text: data.response,
+  isUser: false,
+  pages: data.page_references || []
+};
+setMessages(prev => [...prev, assistantMessage]);
+speakText(data.response);
+
+       
+      setMessages(prev => [...prev, { text: fullText, isUser: false }]);
       speakText(data.response);
+
     } catch (error) {
       console.error("Error sending voice message:", error);
       setMessages(prev => [...prev, { text: "Sorry, there was an error processing your voice request.", isUser: false }]);
