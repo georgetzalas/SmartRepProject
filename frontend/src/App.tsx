@@ -26,40 +26,103 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const sendMessage = async () => {
+  async function sendMessage() {
     if (!inputText.trim()) return;
-    
-    // Add user message to chat
+
     const userMessage = { text: inputText, isUser: true };
     setMessages(prev => [...prev, userMessage]);
     setInputText("");
     setIsLoading(true);
-    
+
     try {
-      // Call the real API
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: inputText }),
       });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
       const data = await response.json();
-      
-      // Add bot response to chat
       setMessages(prev => [...prev, { text: data.response, isUser: false }]);
+      speakText(data.response);
     } catch (error) {
       console.error("Error sending message:", error);
       setMessages(prev => [...prev, { text: "Sorry, there was an error processing your request.", isUser: false }]);
     } finally {
       setIsLoading(false);
     }
-  };
+  }
+
+  async function sendMessageVoice(text: string) {
+    if (!text.trim()) return;
+
+    const userMessage = { text, isUser: true };
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      setMessages(prev => [...prev, { text: data.response, isUser: false }]);
+      speakText(data.response);
+    } catch (error) {
+      console.error("Error sending voice message:", error);
+      setMessages(prev => [...prev, { text: "Sorry, there was an error processing your voice request.", isUser: false }]);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function startListening() {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech Recognition API not supported in this browser.");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = "el-GR";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInputText(transcript);
+      sendMessageVoice(transcript);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error", event.error);
+    };
+
+    recognition.start();
+  }
+
+  function speakText(text: string) {
+  if (!window.speechSynthesis) return;
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  // Try to find a Greek voice
+  const voices = window.speechSynthesis.getVoices();
+  const greekVoice = voices.find(voice => voice.lang.startsWith("el"));
+
+  if (greekVoice) {
+    utterance.voice = greekVoice;
+    utterance.lang = greekVoice.lang; // set lang to match voice
+  } else {
+    // fallback to default Greek locale
+    utterance.lang = "el-GR";
+  }
+
+  window.speechSynthesis.speak(utterance);
+}
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -92,7 +155,7 @@ function App() {
           </svg>
           BMW X1 Manual Assistant
         </div>
-        
+
         <div className="flex-1 p-6 overflow-y-auto bg-gray-50">
           {messages.length === 0 && (
             <div className="text-gray-500 text-center mt-8 space-y-4">
@@ -102,7 +165,7 @@ function App() {
               <p className="text-lg">Ask any question about the BMW X1 manual</p>
             </div>
           )}
-          
+
           {messages.map((message, index) => (
             <div 
               key={index} 
@@ -119,7 +182,7 @@ function App() {
               </div>
             </div>
           ))}
-          
+
           {isLoading && (
             <div className="flex justify-start mb-6">
               <div className="bg-white text-gray-800 p-4 rounded-2xl rounded-bl-none shadow-sm border border-gray-100">
@@ -132,7 +195,7 @@ function App() {
             </div>
           )}
         </div>
-        
+
         <div className="p-6 border-t border-gray-100 bg-white">
           <div className="flex gap-2">
             <textarea
@@ -144,11 +207,20 @@ function App() {
               onKeyDown={handleKeyPress}
             />
             <button
-              className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-3 rounded-xl hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3 rounded-xl hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50"
               onClick={sendMessage}
               disabled={isLoading || !inputText.trim()}
+              aria-label="Send message"
             >
-              Send
+              ➤
+            </button>
+            <button
+              className="bg-gradient-to-r from-green-600 to-green-700 text-white px-4 py-3 rounded-xl hover:from-green-700 hover:to-green-800 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50"
+              onClick={startListening}
+              disabled={isLoading}
+              aria-label="Start voice input"
+            >
+              🎤
             </button>
           </div>
         </div>
