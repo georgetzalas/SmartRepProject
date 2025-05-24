@@ -1,9 +1,15 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import SystemMessage
+import logging
 import os
 from .utils import setup_rag_pipeline, process_query_with_rag # Updated import names
 from contextlib import asynccontextmanager
+
+# Configure logger
+logger = logging.getLogger("uvicorn.error")
 
 manual_path = os.getenv("MANUAL_PATH", "./data/bmw_x1.pdf") # Changed default
 
@@ -26,9 +32,10 @@ async def lifespan(app: FastAPI):
         # For now, the app will start but /chat endpoint will fail gracefully
     else:
         try:
-            llm, vector_store = await setup_rag_pipeline(manual_path)
+            llm, vector_store, memory = await setup_rag_pipeline(manual_path)
             app.state.llm = llm
             app.state.vector_store = vector_store
+            app.state.memory = None  # Initialize memory as None or set appropriately
             app.state.ready = True
             print("RAG pipeline initialized successfully. Application is ready.")
         except Exception as e:
@@ -39,6 +46,7 @@ async def lifespan(app: FastAPI):
     print("Application shutdown: Cleaning up resources.")
     app.state.llm = None
     app.state.vector_store = None
+    app.state.memory = None
     app.state.ready = False
 
 
@@ -68,8 +76,26 @@ async def chat(request: QueryRequest):
     if not getattr(app.state, 'ready', False) or not app.state.llm or not app.state.vector_store:
         raise HTTPException(status_code=503, detail="System not ready. Please try again later. Ensure the manual PDF was loaded correctly.")
 
-    response_content, page_numbers = await process_query_with_rag(request.message, app.state.llm, app.state.vector_store)
-    return {"response": response_content, "page_references": page_numbers}
+    if not app.state.memory:
+        logger.info("First request: Initializing new conversation memory")
+        app.state.memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True,
+            input_key="input",
+            output_key="output"
+        )
+
+        app.state.memory.chat_memory.messages.append(
+            SystemMessage(content="You are a helpful BMW X1 assistant. Answer questions based strictly on the manual content.")
+        )
+    
+    response, page_references = await process_query_with_rag(
+        request.message,
+        app.state.llm,
+        app.state.vector_store,
+        app.state.memory
+    )
+    return {"response": response, "page_references": page_references}
 
 @app.get("/status")
 def status():
@@ -77,8 +103,10 @@ def status():
     is_ready = getattr(app.state, "ready", False)
     llm_loaded = app.state.llm is not None
     vector_store_loaded = app.state.vector_store is not None
+    memory_loaded = app.state.memory is not None
     return {
         "ready": is_ready,
         "llm_initialized": llm_loaded,
-        "vector_store_initialized": vector_store_loaded
+        "vector_store_initialized": vector_store_loaded,
+        "memory_initialized": memory_loaded
         }
