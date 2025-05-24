@@ -1,5 +1,6 @@
 import os
 import logging
+from . import images
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -22,6 +23,30 @@ REBUILD_INDEX = os.getenv("REBUILD_INDEX", "false").lower() == "true"
 # Ensure OPENAI_API_KEY is set in your environment variables
 if not os.getenv("OPENAI_API_KEY"):
     logger.warning("OPENAI_API_KEY environment variable not set. OpenAI calls will fail.")
+
+
+def get_relevant_images(page_numbers: list[int]) -> list[str]:
+    """
+    Get relevant image paths for the given page numbers.
+    Args:
+        page_numbers (list[int]): List of page numbers
+    Returns:
+        list[str]: List of image paths
+    """
+    try:
+        with open("image_database.json", 'r') as f:
+            image_database = json.load(f)
+            
+        relevant_images = []
+        for page in page_numbers:
+            if str(page) in image_database:  # Convert to str as JSON keys are strings
+                relevant_images.extend(image_database[str(page)])
+        
+        return relevant_images
+    except Exception as e:
+        logger.error(f"Error retrieving relevant images: {e}")
+        return []
+    
 
 async def setup_rag_pipeline(manual_file_path: str):
     """
@@ -80,6 +105,18 @@ async def setup_rag_pipeline(manual_file_path: str):
             raise ValueError("Failed to split documents into valid chunks.")
         logger.info(f"Split documents into {len(chunks)} valid chunks.")
 
+        logger.info("Extracting images from PDF...")
+        try:
+            images.extract_images_with_page_numbers(
+                pdf_path=manual_file_path,
+                output_dir="../data/images"
+            )
+            logger.info("Successfully extracted images from PDF")
+        except Exception as e:
+            logger.error(f"Error extracting images: {e}")
+
+        
+            
         # 3. Create embeddings in batches
         logger.info("Initializing OpenAI embeddings model...")
         try:
@@ -120,8 +157,11 @@ async def setup_rag_pipeline(manual_file_path: str):
     # 4. Initialize the LLM
     logger.info("Initializing ChatOpenAI model...")
     try:
-        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0) # Using gpt-3.5-turbo for speed and cost
-                                                                  # Temperature 0 for factual answers
+        llm = ChatOpenAI(
+            model_name="gpt-4.1-mini",
+            temperature=0,
+            max_tokens=2048
+        )
     except Exception as e:
         logger.error(f"Failed to initialize ChatOpenAI model: {e}")
         raise
@@ -143,6 +183,7 @@ async def setup_rag_pipeline(manual_file_path: str):
     logger.info("RAG pipeline components (LLM, Vector Store, and Memory) initialized.")
     return llm, vector_store, memory
 
+    
 async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAISS, memory: ConversationBufferMemory):
     """
     Processes the user's query using the RAG pipeline.
@@ -168,7 +209,7 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
     # This prompt emphasizes answering strictly from the provided context and citing page numbers.
     # [cite: 3, 5, 8, 11]
     prompt_template = """
-    You are an AI assistant for a BMW X1. Your task is to answer the user's question based on the following context and chat history.
+    You are an AI assistant for a BMW X1. You answer only in greek language. Your task is to answer the user's question based on the following context and chat history.
     
     Previous conversation:
     {chat_history}
@@ -178,11 +219,14 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
     {context}
     ---
     
-    Current Question: {input}
-    
     Answer the question using the provided context. If referring to previous conversation, still verify information with the manual context.
-    If the answer cannot be found in the current context, say so clearly.
-    Include relevant page numbers from the manual in your answer.
+    If in the context there is a "Υπόδειξη" section, then give exactly that section as it was written in your answer and a warning sign and live a blanc line from above and below to make it clearer.
+    At the end of your response, give to the user a relevant to your answer follow-up question (only one) to continue the conversation.
+    If the answer cannot be found in the current context, answer "Δεν βρέθηκαν σχετικές πληροφορίες στο εγχειρίδιο." and then 
+    think of what they might mean rellated to the context and their current question (only one thing) and complete the response with "Μηπώς εννοούσαται [ό,τι πιστεύεις ότι εννοούσαν]".
+    If the question of the user down is something like "ναι or "πες μου" you have to answer to your latest follow up question as the current question.
+
+    Current Question: {input}
     
     Answer:
     """
@@ -250,6 +294,14 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
                     seen_pages.add(page_num)
         page_numbers = sorted(list(seen_pages))
 
+    relevant_images = get_relevant_images(page_numbers)
+    
+    logger.info(f"Generated answer: {answer}")
+    logger.info(f"Relevant page(s) from manual: {page_numbers}")
+    if relevant_images:
+        logger.info(f"Found {len(relevant_images)} relevant images")
+
+
     logger.info(f"Generated answer: {answer}")
     if page_numbers:
          logger.info(f"Relevant page(s) from manual: {page_numbers}")
@@ -257,4 +309,4 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
          # For now, returning separately.
          # Example: " (Refer to page(s): 12, 15)" could be added to the answer string.
 
-    return answer, page_numbers
+    return answer, page_numbers, relevant_images

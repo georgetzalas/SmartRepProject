@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import SystemMessage
@@ -23,6 +24,7 @@ async def lifespan(app: FastAPI):
     app.state.ready = False
     app.state.llm = None
     app.state.vector_store = None
+    app.state.memory = None  # Initialize memory to None or appropriate value
     app.state._state = None  # Initialize _state to None or appropriate value
     print("Application startup: Initializing RAG pipeline...")
     manual_path = os.getenv("MANUAL_PATH", "/app/data/bmw_x1.pdf") # Ensure this PDF is available at this path
@@ -62,12 +64,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add static file mounting for images here
+app.mount("/images", StaticFiles(directory=os.path.abspath("../data/images")), name="images")
+
 class QueryRequest(BaseModel):
     message: str
 
 class QueryResponse(BaseModel):
     response: str
     page_references: list[int] = [] # To include page numbers
+    relevant_images: list[str] = []  # To include image paths
 
 @app.post("/chat", response_model=QueryResponse)
 async def chat(request: QueryRequest):
@@ -90,13 +96,17 @@ async def chat(request: QueryRequest):
             SystemMessage(content="You are a helpful BMW X1 assistant. Answer questions based strictly on the manual content.")
         )
     
-    response, page_references = await process_query_with_rag(
+    response, page_references, relevant_images = await process_query_with_rag(
         request.message,
         app.state.llm,
         app.state.vector_store,
         app.state.memory
     )
-    return {"response": response, "page_references": page_references}
+    return {
+        "response": response, 
+        "page_references": page_references,
+        "relevant_images": relevant_images
+    }
 
 @app.get("/status")
 def status():

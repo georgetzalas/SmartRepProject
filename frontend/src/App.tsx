@@ -1,30 +1,40 @@
 import { useState, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+interface Message {
+  text: string;
+  isUser: boolean;
+  images?: string[];
+  pages?: number[];
+  }
 
 function App() {
-  const [messages, setMessages] = useState<Array<{ text: string; isUser: boolean }>>([]);
-  const [inputText, setInputText] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [appReady, setAppReady] = useState(false);
+const [inputText, setInputText] = useState("");
+const [isLoading, setIsLoading] = useState(false);
+const [appReady, setAppReady] = useState(false);
 
-  // Poll backend status on mount
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    const checkStatus = async () => {
-      try {
-        const res = await fetch("/api/status");
-        const data = await res.json();
-        if (data.ready) {
-          setAppReady(true);
-          if (interval) clearInterval(interval);
-        }
-      } catch (e) {
-        // ignore errors, keep polling
+// Poll backend status on mount
+useEffect(() => {
+  let interval: ReturnType<typeof setInterval>;
+  const checkStatus = async () => {
+    try {
+      const res = await fetch("/api/status");
+      const data = await res.json();
+      if (data.ready) {
+        setAppReady(true);
+        if (interval) clearInterval(interval);
       }
-    };
-    checkStatus();
-    interval = setInterval(checkStatus, 1500);
-    return () => clearInterval(interval);
-  }, []);
+    } catch (e) {
+      // ignore errors, keep polling
+    }
+  };
+  checkStatus();
+  interval = setInterval(checkStatus, 1500);
+  return () => clearInterval(interval);
+}, []);
+
+const [messages, setMessages] = useState<Message[]>([]);
 
   async function sendMessage() {
     if (!inputText.trim()) return;
@@ -44,9 +54,18 @@ function App() {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const data = await response.json();
-      const fullText = data.response + (data.page_references ? `\n\nReferences:\n${data.page_references.join("\n")}` : "");
+      const fullText = data.response.startsWith("Δεν βρέθηκαν") 
+      ? data.response 
+      : data.response + (data.page_references ? `\n\nΜπορείτε να ανατρέξεται στις ακόλουθες σελίδες:\n${data.page_references.join(", ")}` : "");
 
-      setMessages(prev => [...prev, { text: fullText, isUser: false }]);
+      // change 8.55pm setMessages(prev => [...prev, { text: fullText, isUser: false }]);
+      setMessages(prev => [...prev, { 
+        text: fullText, 
+        isUser: false,
+        images: data.relevant_images,
+        pages: data.page_references 
+      }]);
+
       speakText(fullText);
     } catch (error) {
       console.error("Error sending message:", error);
@@ -64,36 +83,39 @@ function App() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
-      });
+        const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text }),
+        });
 
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      var fullText = "";
-      
-      const data = await response.json();
-      
-      const assistantMessage = {
-  text: data.response,
-  isUser: false,
-  pages: data.page_references || []
-};
-setMessages(prev => [...prev, assistantMessage]);
-speakText(data.response);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const data = await response.json();
+        const fullText = data.response.startsWith("Δεν βρέθηκαν") 
+            ? data.response 
+            : data.response + (data.page_references ? `\n\nΜπορείτε να ανατρέξεται στις ακόλουθες σελίδες:\n${data.page_references.join(", ")}` : "");
 
-       
-      setMessages(prev => [...prev, { text: fullText, isUser: false }]);
-      speakText(data.response);
+        const assistantMessage: Message = {
+            text: fullText,
+            isUser: false,
+            pages: data.page_references || [],
+            images: data.relevant_images || []
+        };
+
+        setMessages(prev => [...prev, assistantMessage]);
+        speakText(fullText);
 
     } catch (error) {
-      console.error("Error sending voice message:", error);
-      setMessages(prev => [...prev, { text: "Sorry, there was an error processing your voice request.", isUser: false }]);
+        console.error("Error sending voice message:", error);
+        setMessages(prev => [...prev, { 
+            text: "Sorry, there was an error processing your voice request.", 
+            isUser: false 
+        }]);
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
     }
-  }
+}
 
   function startListening() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -137,6 +159,25 @@ speakText(data.response);
 
   window.speechSynthesis.speak(utterance);
 }
+// new 8.55 pm
+const ImageDisplay = ({ images }: { images: string[] }) => {
+  if (!images || images.length === 0) return null;
+  
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-4">
+      {images.map((path, index) => (
+        <img
+          key={index}
+          src={`http://localhost:8000${path}`}
+          alt={`Manual illustration ${index + 1}`}
+          className="rounded-lg shadow-md max-w-full hover:shadow-lg transition-shadow duration-200"
+          loading="lazy"
+        />
+      ))}
+    </div>
+  );
+};
+  // new 8.55 pm
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -181,21 +222,59 @@ speakText(data.response);
           )}
 
           {messages.map((message, index) => (
-            <div 
-              key={index} 
-              className={`mb-6 flex ${message.isUser ? "justify-end" : "justify-start"}`}
-            >
-              <div 
-                className={`max-w-[80%] p-4 rounded-2xl shadow-sm ${
-                  message.isUser 
-                    ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-none" 
-                    : "bg-white text-gray-800 rounded-bl-none border border-gray-100"
-                }`}
-              >
-                {message.text}
-              </div>
-            </div>
-          ))}
+  <div 
+    key={index} 
+    className={`mb-6 flex ${message.isUser ? "justify-end" : "justify-start"}`}
+  >
+    <div 
+      className={`max-w-[80%] p-4 rounded-2xl shadow-sm ${
+        message.isUser 
+          ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-none" 
+          : "bg-white text-gray-800 rounded-bl-none border border-gray-100"
+      }`}
+    >
+      {!message.isUser ? (
+        <div className="prose prose-sm max-w-none">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              ol: (props) => (
+                <ol {...props} className="list-decimal list-inside space-y-1 pl-4" />
+              ),
+              li: (props) => <li {...props} className="ml-1" />,
+            }}
+          >
+            {message.text}
+          </ReactMarkdown>
+        </div>
+      ) : (
+        message.text
+      )}
+
+{!message.isUser && message.images && <ImageDisplay images={message.images} />}
+
+    </div>
+  </div>
+))}
+
+
+          {  /* new 8:55pm {messages.map((message, index) => (
+  <div 
+    key={index} 
+    className={`mb-6 flex ${message.isUser ? "justify-end" : "justify-start"}`}
+  >
+    <div 
+      className={`max-w-[80%] p-4 rounded-2xl shadow-sm ${
+        message.isUser 
+          ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-none" 
+          : "bg-white text-gray-800 rounded-bl-none border border-gray-100"
+      }`}
+    >
+      {message.text}
+    </div>
+  </div>
+))} */}
+          
 
           {isLoading && (
             <div className="flex justify-start mb-6">
@@ -229,7 +308,10 @@ speakText(data.response);
               ➤
             </button>
             <button
-              className="bg-gradient-to-r from-green-600 to-green-700 text-white px-4 py-3 rounded-xl hover:from-green-700 hover:to-green-800 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50"
+              className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3
++            hover:from-blue-700 hover:to-blue-800 focus:outline-none
++            focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
++            transition-all duration-200 disabled:opacity-50"
               onClick={startListening}
               disabled={isLoading}
               aria-label="Start voice input"
