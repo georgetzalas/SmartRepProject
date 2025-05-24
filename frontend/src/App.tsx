@@ -44,7 +44,9 @@ function App() {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const data = await response.json();
-      const fullText = data.response + (data.page_references ? `\n\nReferences:\n${data.page_references.join("\n")}` : "");
+      const fullText = data.response.startsWith("Δεν βρέθηκαν") 
+      ? data.response 
+      : data.response + (data.page_references ? `\n\nΜπορείτε να ανατρέξεται στις ακόλουθες σελίδες:\n${data.page_references.join(", ")}` : "");
 
       setMessages(prev => [...prev, { text: fullText, isUser: false }]);
       speakText(fullText);

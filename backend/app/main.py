@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
     app.state.ready = False
     app.state.llm = None
     app.state.vector_store = None
+    app.state.memory = None  # Initialize memory to None or appropriate value
     app.state._state = None  # Initialize _state to None or appropriate value
     print("Application startup: Initializing RAG pipeline...")
     manual_path = os.getenv("MANUAL_PATH", "/app/data/bmw_x1.pdf") # Ensure this PDF is available at this path

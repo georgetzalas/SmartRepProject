@@ -120,8 +120,11 @@ async def setup_rag_pipeline(manual_file_path: str):
     # 4. Initialize the LLM
     logger.info("Initializing ChatOpenAI model...")
     try:
-        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0) # Using gpt-3.5-turbo for speed and cost
-                                                                  # Temperature 0 for factual answers
+        llm = ChatOpenAI(
+            model_name="gpt-4.1-mini",
+            temperature=0,
+            max_tokens=2048
+        )
     except Exception as e:
         logger.error(f"Failed to initialize ChatOpenAI model: {e}")
         raise
@@ -168,7 +171,7 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
     # This prompt emphasizes answering strictly from the provided context and citing page numbers.
     # [cite: 3, 5, 8, 11]
     prompt_template = """
-    You are an AI assistant for a BMW X1. Your task is to answer the user's question based on the following context and chat history.
+    You are an AI assistant for a BMW X1. You answer only in greek language. Your task is to answer the user's question based on the following context and chat history.
     
     Previous conversation:
     {chat_history}
@@ -178,11 +181,14 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
     {context}
     ---
     
-    Current Question: {input}
-    
     Answer the question using the provided context. If referring to previous conversation, still verify information with the manual context.
-    If the answer cannot be found in the current context, say so clearly.
-    Include relevant page numbers from the manual in your answer.
+    If in the context there is a "Υπόδειξη" section, then give exactly that section as it was written in your answer and a warning sign and live a blanc line from above and below to make it clearer.
+    At the end of your response, give to the user a relevant to your answer follow-up question (only one) to continue the conversation.
+    If the answer cannot be found in the current context, answer "Δεν βρέθηκαν σχετικές πληροφορίες στο εγχειρίδιο." and then 
+    think of what they might mean rellated to the context and their current question (only one thing) and complete the response with "Μηπώς εννοούσαται [ό,τι πιστεύεις ότι εννοούσαν]".
+    If the question of the user down is something like "ναι or "πες μου" you have to answer to your latest follow up question as the current question.
+
+    Current Question: {input}
     
     Answer:
     """
