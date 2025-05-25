@@ -214,6 +214,7 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
     chat_history = []
     if memory and hasattr(memory, 'chat_memory'):
         chat_history = memory.chat_memory.messages
+        last_chat = chat_history[-1].content if chat_history else ""
         logger.info(f"Using conversation history with {len(chat_history)} messages")
     else:
         logger.info("First request: No conversation history available")
@@ -223,7 +224,7 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
     # [cite: 3, 5, 8, 11]
     if chat_history.__len__() > 0:
         prompt_template = """
-        You are an AI assistant for a BMW X1. You answer only in greek language. Your task is to answer the user's question based on the following context and chat history.
+        You are an AI assistant for a BMW X1. You answer only in simple greek language. Your task is to answer the user's question based on the following context and chat history.
         
         Previous conversation:
         {chat_history}
@@ -238,7 +239,7 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
         At the end of your response, give to the user a relevant to your answer follow-up question (only one) to continue the conversation.
         If the answer cannot be found in the current context, answer "Δεν βρέθηκαν σχετικές πληροφορίες στο εγχειρίδιο." and then 
         think of what they might mean rellated to the context and their current question (only one thing) and complete the response with "Μηπώς εννοούσαται [ό,τι πιστεύεις ότι εννοούσαν]".
-        If the question of the user down is something like "ναι or "πες μου" you have to answer to your latest follow up question which is {last_chat}, as the current question and ignore the following question.
+        If the question of the user is something like "ναι or "πες μου" you have to answer to your latest follow up question which is {last_chat}, as the current question and ignore the following question.
 
         Current Question: {input}
         
@@ -246,7 +247,7 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
         """
     else:
         prompt_template = """
-        You are an AI assistant for a BMW X1. You answer only in greek language. Your task is to answer the user's question based on the following context and chat history.
+        You are an AI assistant for a BMW X1. You answer only in simple greek language. Your task is to answer the user's question based on the following context and chat history.
         
         Previous conversation:
         {chat_history}
@@ -293,7 +294,8 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
 
         response = await retrieval_chain.ainvoke({
             "input": query,
-            "chat_history": chat_history
+            "chat_history": chat_history,
+            "last_chat": last_chat
         })
         
         # Add null check before saving context
@@ -308,7 +310,8 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
         # Include memory in the chain invocation
         response = await retrieval_chain.ainvoke({
             "input": query,
-            "chat_history": memory.chat_memory.messages
+            "chat_history": chat_history,
+            "last_chat": last_chat
         })
 
         last_sentence = extract_last_sentence_with_semicolon(prompt_template)

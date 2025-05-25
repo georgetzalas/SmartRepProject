@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -71,11 +71,12 @@ const [messages, setMessages] = useState<Message[]>([]);
       ? data.response 
       : data.response + (data.page_references ? `\n\nΜπορείτε να ανατρέξεται στις ακόλουθες σελίδες:\n${data.page_references.join(", ")}` : "");
 
-      let rel_images = data.relevant_images || [];
+      const pages: number[] = data.page_references ?? [];
+      const rel_images = await fetchImagesForPages(pages);
       if (data.page_references && data.page_references.length > 0) {
         // Converts array of pages to a comma-separated string (if needed)
-        const pagesString = data.page_references.join(",");
-        rel_images = fetchImagesForPages(pagesString);
+        pages
+        rel_images
       }
 
       // change 8.55pm setMessages(prev => [...prev, { text: fullText, isUser: false }]);
@@ -95,17 +96,17 @@ const [messages, setMessages] = useState<Message[]>([]);
     }
   }
 
-  async function fetchImagesForPages(pages: string): Promise<string[]> {
+  const fetchImagesForPages = useCallback(async (pages: number[]): Promise<string[]> => {
+    if (!pages.length) return [];
     try {
-      const res = await fetch(`/api/images?pages=${pages}`);
+      const res = await fetch(`/api/images?pages=${pages.join(",")}`);
       const data = await res.json();
-      console.log("Image paths:", data.images);
-      return data.images || [];
+      return data.images ?? [];
     } catch (err) {
-      console.error("Error fetching images", err);
+      console.error("Image fetch failed", err);
       return [];
     }
-  }
+  }, []);
 
   
 
@@ -131,13 +132,13 @@ const [messages, setMessages] = useState<Message[]>([]);
             : data.response + (data.page_references ? `\n\nΜπορείτε να ανατρέξεται στις ακόλουθες σελίδες:\n${data.page_references.join(", ")}` : "");
 
             // Converts array of pages to a comma-separated string (if needed)
-            const pagesString = data.page_references.join(",");
-            const rel_images = await fetchImagesForPages(pagesString);
+            const pages: number[] = data.page_references ?? [];
+            const rel_images = await fetchImagesForPages(pages);
           
         const assistantMessage: Message = {
             text: fullText,
             isUser: false,
-            pages: data.page_references || [],
+            pages: pages,
             images: rel_images
         };
 
