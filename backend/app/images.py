@@ -1,6 +1,6 @@
 import os
 import json
-from pymupdf import fitz  # This is PyMuPDF
+import fitz  # This is PyMuPDF
 
 
 def extract_images_with_page_numbers(pdf_path, output_dir):
@@ -32,4 +32,4 @@ def extract_images_with_page_numbers(pdf_path, output_dir):
         with open('image_database.json', 'w') as f:
             json.dump(images_by_page, f)
 
-extract_images_with_page_numbers("../data/bmw_x1.pdf", "../data/images")
+# extract_images_with_page_numbers("../data/bmw_x1.pdf", "../data/images")

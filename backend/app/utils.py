@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from . import images
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -183,6 +184,18 @@ async def setup_rag_pipeline(manual_file_path: str):
     logger.info("RAG pipeline components (LLM, Vector Store, and Memory) initialized.")
     return llm, vector_store, memory
 
+import re
+
+def extract_last_sentence_with_semicolon(text: str) -> str:
+    """
+    Extracts the last sentence ending with a semicolon from the given text.
+    Returns an empty string if none is found.
+    """
+    # This regex finds all segments that end with a semicolon.
+    sentences = re.findall(r'([^;]+;)', text)
+    if sentences:
+        return sentences[-1].strip()
+    return ""
     
 async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAISS, memory: ConversationBufferMemory):
     """
@@ -208,28 +221,52 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
     # Define the prompt template
     # This prompt emphasizes answering strictly from the provided context and citing page numbers.
     # [cite: 3, 5, 8, 11]
-    prompt_template = """
-    You are an AI assistant for a BMW X1. You answer only in greek language. Your task is to answer the user's question based on the following context and chat history.
-    
-    Previous conversation:
-    {chat_history}
-    
-    Current context from manual:
-    ---
-    {context}
-    ---
-    
-    Answer the question using the provided context. If referring to previous conversation, still verify information with the manual context.
-    If in the context there is a "Υπόδειξη" section, then give exactly that section as it was written in your answer and a warning sign and live a blanc line from above and below to make it clearer.
-    At the end of your response, give to the user a relevant to your answer follow-up question (only one) to continue the conversation.
-    If the answer cannot be found in the current context, answer "Δεν βρέθηκαν σχετικές πληροφορίες στο εγχειρίδιο." and then 
-    think of what they might mean rellated to the context and their current question (only one thing) and complete the response with "Μηπώς εννοούσαται [ό,τι πιστεύεις ότι εννοούσαν]".
-    If the question of the user down is something like "ναι or "πες μου" you have to answer to your latest follow up question as the current question.
+    if chat_history.__len__() > 0:
+        prompt_template = """
+        You are an AI assistant for a BMW X1. You answer only in greek language. Your task is to answer the user's question based on the following context and chat history.
+        
+        Previous conversation:
+        {chat_history}
+        
+        Current context from manual:
+        ---
+        {context}
+        ---
+        
+        Answer the question using the provided context. If referring to previous conversation, still verify information with the manual context.
+        If in the context there is a "Υπόδειξη" section, then give exactly that section as it was written in your answer and a warning sign and live a blanc line from above and below to make it clearer.
+        At the end of your response, give to the user a relevant to your answer follow-up question (only one) to continue the conversation.
+        If the answer cannot be found in the current context, answer "Δεν βρέθηκαν σχετικές πληροφορίες στο εγχειρίδιο." and then 
+        think of what they might mean rellated to the context and their current question (only one thing) and complete the response with "Μηπώς εννοούσαται [ό,τι πιστεύεις ότι εννοούσαν]".
+        If the question of the user down is something like "ναι or "πες μου" you have to answer to your latest follow up question which is {last_chat}, as the current question and ignore the following question.
 
-    Current Question: {input}
-    
-    Answer:
-    """
+        Current Question: {input}
+        
+        Answer:
+        """
+    else:
+        prompt_template = """
+        You are an AI assistant for a BMW X1. You answer only in greek language. Your task is to answer the user's question based on the following context and chat history.
+        
+        Previous conversation:
+        {chat_history}
+        
+        Current context from manual:
+        ---
+        {context}
+        ---
+        
+        Answer the question using the provided context. If referring to previous conversation, still verify information with the manual context.
+        If in the context there is a "Υπόδειξη" section, then give exactly that section as it was written in your answer and a warning sign and live a blanc line from above and below to make it clearer.
+        At the end of your response, give to the user a relevant to your answer follow-up question (only one) to continue the conversation.
+        If the answer cannot be found in the current context, answer "Δεν βρέθηκαν σχετικές πληροφορίες στο εγχειρίδιο." and then 
+        think of what they might mean rellated to the context and their current question (only one thing) and complete the response with "Μηπώς εννοούσαται [ό,τι πιστεύεις ότι εννοούσαν]".
+        If the question of the user down is something like "ναι or "πες μου" you have to answer to your latest follow up question as the current question.
+
+        Current Question: {input}
+        
+        Answer:
+        """
     prompt = PromptTemplate.from_template(prompt_template)
 
     # Create a retriever
@@ -252,6 +289,7 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
         chat_history = []
         if memory and hasattr(memory, 'chat_memory'):
             chat_history = memory.chat_memory.messages
+            last_chat = chat_history[-1].content if chat_history else ""
 
         response = await retrieval_chain.ainvoke({
             "input": query,
@@ -272,9 +310,17 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
             "input": query,
             "chat_history": memory.chat_memory.messages
         })
+
+        last_sentence = extract_last_sentence_with_semicolon(prompt_template)
+        logger.info(f"Extracted last sentence: {last_sentence}")
+
+        # Optionally, save to a file for persistence between prompts:
         
         # Update memory with the new interaction
-        memory.save_context({"input": query}, {"output": response["answer"]})
+        if query == 'ναι' or query == 'πες μου' or query == 'yes' or query == 'tell me':
+            memory.save_context({"input": query}, {"output": last_sentence})
+        else:
+            memory.save_context({"input": query}, {"output": response["answer"]})
         
     except Exception as e:
         logger.error(f"Error during retrieval chain invocation: {e}")
@@ -282,6 +328,8 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
 
     answer = response.get("answer", "No answer could be generated.")
     
+    
+
     # Extract page numbers from the context documents used for the answer
     # Note: PyPDFLoader adds 'page' (0-indexed) to metadata. We add 1 for user-friendly page numbers.
     page_numbers = []
@@ -309,4 +357,4 @@ async def process_query_with_rag(query: str, llm: ChatOpenAI, vector_store: FAIS
          # For now, returning separately.
          # Example: " (Refer to page(s): 12, 15)" could be added to the answer string.
 
-    return answer, page_numbers, relevant_images
+    return answer, page_numbers

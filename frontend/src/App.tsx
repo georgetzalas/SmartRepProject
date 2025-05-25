@@ -2,6 +2,18 @@ import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+// Add these type definitions
+//type ListProps = React.DetailedHTMLProps<
+  //React.OlHTMLAttributes<HTMLOListElement>,
+  //HTMLOListElement
+//>;
+
+type ListItemProps = React.DetailedHTMLProps<
+  React.LiHTMLAttributes<HTMLLIElement>,
+  HTMLLIElement
+>;
+
+
 interface Message {
   text: string;
   isUser: boolean;
@@ -44,6 +56,7 @@ const [messages, setMessages] = useState<Message[]>([]);
     setInputText("");
     setIsLoading(true);
 
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -58,11 +71,18 @@ const [messages, setMessages] = useState<Message[]>([]);
       ? data.response 
       : data.response + (data.page_references ? `\n\nΜπορείτε να ανατρέξεται στις ακόλουθες σελίδες:\n${data.page_references.join(", ")}` : "");
 
+      let rel_images = data.relevant_images || [];
+      if (data.page_references && data.page_references.length > 0) {
+        // Converts array of pages to a comma-separated string (if needed)
+        const pagesString = data.page_references.join(",");
+        rel_images = fetchImagesForPages(pagesString);
+      }
+
       // change 8.55pm setMessages(prev => [...prev, { text: fullText, isUser: false }]);
       setMessages(prev => [...prev, { 
         text: fullText, 
         isUser: false,
-        images: data.relevant_images,
+        images: rel_images,
         pages: data.page_references 
       }]);
 
@@ -74,6 +94,20 @@ const [messages, setMessages] = useState<Message[]>([]);
       setIsLoading(false);
     }
   }
+
+  async function fetchImagesForPages(pages: string): Promise<string[]> {
+    try {
+      const res = await fetch(`/api/images?pages=${pages}`);
+      const data = await res.json();
+      console.log("Image paths:", data.images);
+      return data.images || [];
+    } catch (err) {
+      console.error("Error fetching images", err);
+      return [];
+    }
+  }
+
+  
 
   async function sendMessageVoice(text: string) {
     if (!text.trim()) return;
@@ -96,12 +130,22 @@ const [messages, setMessages] = useState<Message[]>([]);
             ? data.response 
             : data.response + (data.page_references ? `\n\nΜπορείτε να ανατρέξεται στις ακόλουθες σελίδες:\n${data.page_references.join(", ")}` : "");
 
+            // Converts array of pages to a comma-separated string (if needed)
+            const pagesString = data.page_references.join(",");
+            const rel_images = await fetchImagesForPages(pagesString);
+          
         const assistantMessage: Message = {
             text: fullText,
             isUser: false,
             pages: data.page_references || [],
-            images: data.relevant_images || []
+            images: rel_images
         };
+
+        if (data.page_references && data.page_references.length > 0) {
+          // Converts array of pages to a comma-separated string (if needed)
+          const pagesString = data.page_references.join(",");
+          fetchImagesForPages(pagesString);
+        }
 
         setMessages(prev => [...prev, assistantMessage]);
         speakText(fullText);
@@ -159,25 +203,7 @@ const [messages, setMessages] = useState<Message[]>([]);
 
   window.speechSynthesis.speak(utterance);
 }
-// new 8.55 pm
-const ImageDisplay = ({ images }: { images: string[] }) => {
-  if (!images || images.length === 0) return null;
-  
-  return (
-    <div className="mt-4 grid grid-cols-2 gap-4">
-      {images.map((path, index) => (
-        <img
-          key={index}
-          src={`http://localhost:8000${path}`}
-          alt={`Manual illustration ${index + 1}`}
-          className="rounded-lg shadow-md max-w-full hover:shadow-lg transition-shadow duration-200"
-          loading="lazy"
-        />
-      ))}
-    </div>
-  );
-};
-  // new 8.55 pm
+
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -238,14 +264,26 @@ const ImageDisplay = ({ images }: { images: string[] }) => {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              ol: (props) => (
-                <ol {...props} className="list-decimal list-inside space-y-1 pl-4" />
+                ol: ({ children, ...props }: React.HTMLProps<HTMLOListElement>) => {
+                  const { type, ...restProps } = props;
+                  return (
+                    <ol {...restProps} className="list-decimal list-inside space-y-1 pl-4">
+                      {children}
+                    </ol>
+                  );
+                },
+                li: ({ className, children, ...props }: React.HTMLProps<HTMLLIElement>) => (
+                <li {...props as ListItemProps} className="ml-1">
+                  {children}
+                </li>
               ),
-              li: (props) => <li {...props} className="ml-1" />,
             }}
+            className="prose prose-sm max-w-none"
           >
             {message.text}
           </ReactMarkdown>
+          {/* Render images below the answer */}
+          {message.images && <ImageDisplay images={message.images} />}
         </div>
       ) : (
         message.text
@@ -308,10 +346,7 @@ const ImageDisplay = ({ images }: { images: string[] }) => {
               ➤
             </button>
             <button
-              className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3
-+            hover:from-blue-700 hover:to-blue-800 focus:outline-none
-+            focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
-+            transition-all duration-200 disabled:opacity-50"
+              className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3 rounded-x1 hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50"
               onClick={startListening}
               disabled={isLoading}
               aria-label="Start voice input"
@@ -324,5 +359,23 @@ const ImageDisplay = ({ images }: { images: string[] }) => {
     </div>
   );
 }
+
+const ImageDisplay = ({ images }: { images: string[] }) => {
+  if (!images || images.length === 0) return null;
+  
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-4">
+      {images.map((path, index) => (
+        <img
+          key={index}
+          src={`http://localhost:8000${path}`} // Adjust if you use a different static path prefix
+          alt={`Manual illustration ${index + 1}`}
+          className="rounded-lg shadow-md max-w-full hover:shadow-lg transition-shadow duration-200"
+          loading="lazy"
+        />
+      ))}
+    </div>
+  );
+};
 
 export default App;

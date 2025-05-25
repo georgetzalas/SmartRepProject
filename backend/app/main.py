@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import SystemMessage
 import logging
+import json
 import os
 from .utils import setup_rag_pipeline, process_query_with_rag # Updated import names
 from contextlib import asynccontextmanager
@@ -64,8 +65,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add static file mounting for images here
-app.mount("/images", StaticFiles(directory=os.path.abspath("../data/images")), name="images")
+
 
 class QueryRequest(BaseModel):
     message: str
@@ -74,6 +74,45 @@ class QueryResponse(BaseModel):
     response: str
     page_references: list[int] = [] # To include page numbers
     relevant_images: list[str] = []  # To include image paths
+
+# Compute the absolute path to the data/images directory:
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+images_dir = os.path.join(BASE_DIR, "data", "images")
+
+# Add static file mounting for images here
+app.mount("/images", StaticFiles(directory=images_dir), name="images")
+
+@app.get("/api/images")
+def get_images(pages: str = Query(..., description="Comma-separated list of page numbers")):
+    """
+    Given comma-separated page numbers, return all related image paths.
+    Assumes image_database.json is in the app folder with a mapping of page numbers to a list of image file paths.
+    """
+    json_path = os.path.join(os.path.dirname(__file__), "image_database.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail="Image database not found")
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading image database: {e}")
+
+    # Convert input pages to list of ints
+    try:
+        requested_pages = [str(int(p.strip())) for p in pages.split(",")]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid page number format")
+
+    # Gather image paths for requested pages
+    images = []
+    for page in requested_pages:
+        # Our JSON keys can be either string or number;
+        # ensure we use string keys. If page not found, ignore it.
+        page_images = data.get(page, [])
+        images.extend(page_images)
+    
+    return {"images": images}
+
 
 @app.post("/chat", response_model=QueryResponse)
 async def chat(request: QueryRequest):
@@ -96,7 +135,7 @@ async def chat(request: QueryRequest):
             SystemMessage(content="You are a helpful BMW X1 assistant. Answer questions based strictly on the manual content.")
         )
     
-    response, page_references, relevant_images = await process_query_with_rag(
+    response, page_references = await process_query_with_rag(
         request.message,
         app.state.llm,
         app.state.vector_store,
@@ -105,7 +144,6 @@ async def chat(request: QueryRequest):
     return {
         "response": response, 
         "page_references": page_references,
-        "relevant_images": relevant_images
     }
 
 @app.get("/status")
